@@ -1,0 +1,14 @@
+{
+  "name": "northstar-ecommerce",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Production-ready backend for the Northstar storefront",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cors": "^2.8.0",
+    "express": "^4.21.2"
+  }
+}

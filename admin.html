@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin · Northstar Store</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="index.html">Northstar</a>
+      <div class="topbar-actions">
+        <a class="btn btn-secondary" href="index.html">Back to shop</a>
+        <button class="btn btn-secondary" id="logoutButton" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="admin-page">
+      <section class="admin-welcome">
+        <p class="eyebrow">Admin dashboard</p>
+        <h1>Manage products and orders</h1>
+        <p>Use this page to add items, remove outdated products, and review recent orders placed by customers.</p>
+      </section>
+
+      <section class="admin-grid">
+        <div class="admin-panel">
+          <h2>New product</h2>
+          <form id="addProductForm">
+            <label>
+              Product name
+              <input name="name" type="text" required />
+            </label>
+            <label>
+              Price
+              <input name="price" type="number" min="1" step="1" inputmode="numeric" required />
+            </label>
+            <label>
+              Quantity
+              <input name="quantity" min="1" step="1" type="number" required />
+            </label>
+            <label>
+              Description
+              <textarea name="desc" rows="3" required></textarea>
+            </label>
+            <label>
+              Photo
+              <input name="photo" type="file" accept="image/*" />
+            </label>
+            <div class="admin-form-actions">
+              <button class="btn btn-primary" id="productSubmitButton" type="submit">Add product</button>
+              <button class="btn btn-secondary hidden" id="cancelEditButton" type="button">Cancel edit</button>
+            </div>
+            <div id="productMessage" class="checkout-message"></div>
+          </form>
+          <div class="admin-card">
+            <h2>Product catalog</h2>
+            <div id="adminProductList"></div>
+          </div>
+        </div>
+
+        <div class="admin-panel">
+          <div class="admin-panel-header">
+            <h2>Orders</h2>
+            <button class="btn btn-secondary" id="resetOrdersButton" type="button">Reset orders</button>
+          </div>
+          <div class="admin-stats">
+            <div class="admin-stat">
+              <span>Total orders</span>
+              <strong id="orderCount">0</strong>
+            </div>
+            <div class="admin-stat">
+              <span>Total revenue</span>
+              <strong id="orderRevenue">₱0.00</strong>
+            </div>
+          </div>
+          <div id="adminOrders"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="script.js"></script>
+  </body>
+</html>
