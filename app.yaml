@@ -1,0 +1,5 @@
+runtime: nodejs22
+entrypoint: node server.js
+
+env_variables:
+  NODE_ENV: production

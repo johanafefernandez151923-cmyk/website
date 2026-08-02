@@ -6,7 +6,7 @@ const { getProducts, upsertProducts, getOrders, addOrder, resetOrders } = requir
 const { sendSmsNotification } = require('./sms');
 
 const app = express();
-const port = process.env.PORT || 3100;
+const port = Number(process.env.PORT || 3100);
 const rootDir = __dirname;
 
 app.use(cors());
@@ -163,6 +163,6 @@ app.get('*', (req, res) => {
   return res.status(404).send('Not found');
 });
 
-app.listen(port, () => {
-  console.log(`Server listening on http://127.0.0.1:${port}/`);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Server listening on http://0.0.0.0:${port}/`);
 });

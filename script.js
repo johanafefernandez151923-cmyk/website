@@ -731,7 +731,6 @@ if (checkoutForm) {
     };
 
     orders.push(order);
-    saveOrders();
     cart = [];
     saveCart();
     updateCartDisplay();
