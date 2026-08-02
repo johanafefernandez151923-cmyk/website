@@ -11,17 +11,44 @@ function ensureSchema(connection) {
       price REAL NOT NULL,
       quantity INTEGER NOT NULL DEFAULT 0,
       desc TEXT NOT NULL,
-      image TEXT,
-      emoji TEXT,
-      color TEXT NOT NULL
+      image TEXT
     );
   `);
 
+  connection.exec(`
+    CREATE TABLE IF NOT EXISTS customers (
+      customer_no INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_name TEXT NOT NULL,
+      address TEXT NOT NULL,
+      email TEXT,
+      phone_number TEXT
+    );
+  `);
+
+  const productColumns = connection.prepare('PRAGMA table_info(products)').all().map((column) => column.name);
+  if (productColumns.includes('emoji') || productColumns.includes('color')) {
+    connection.exec(`
+      CREATE TABLE products_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        price REAL NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 0,
+        desc TEXT NOT NULL,
+        image TEXT
+      );
+      INSERT INTO products_new (id, name, price, quantity, desc, image)
+      SELECT id, name, price, quantity, desc, image FROM products;
+      DROP TABLE products;
+      ALTER TABLE products_new RENAME TO products;
+    `);
+  }
+
   const orderColumns = connection.prepare('PRAGMA table_info(orders)').all();
-  const hasProductId = orderColumns.some((column) => column.name === 'product_id');
+  const columnNames = orderColumns.map((column) => column.name);
+  const hasProductId = columnNames.includes('product_id');
 
   if (!hasProductId) {
-    const hasPayload = orderColumns.some((column) => column.name === 'payload');
+    const hasPayload = columnNames.includes('payload');
     if (hasPayload) {
       connection.exec(`
         DROP TABLE IF EXISTS orders_new;
@@ -29,7 +56,11 @@ function ensureSchema(connection) {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           product_id INTEGER NOT NULL,
           quantity INTEGER NOT NULL,
-          total_price REAL NOT NULL
+          total_price REAL NOT NULL,
+          customer_name TEXT,
+          address TEXT,
+          phone_number TEXT,
+          order_date TEXT
         );
         INSERT INTO orders_new (product_id, quantity, total_price)
         SELECT
@@ -46,10 +77,26 @@ function ensureSchema(connection) {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           product_id INTEGER NOT NULL,
           quantity INTEGER NOT NULL,
-          total_price REAL NOT NULL
+          total_price REAL NOT NULL,
+          customer_name TEXT,
+          address TEXT,
+          phone_number TEXT,
+          order_date TEXT
         );
       `);
     }
+  }
+
+  const updatedOrderColumns = connection.prepare('PRAGMA table_info(orders)').all();
+  const updatedColumnNames = updatedOrderColumns.map((column) => column.name);
+  const needsExpandedColumns = ['customer_name', 'address', 'phone_number', 'order_date'].some((column) => !updatedColumnNames.includes(column));
+  if (needsExpandedColumns) {
+    connection.exec(`
+      ALTER TABLE orders ADD COLUMN customer_name TEXT;
+      ALTER TABLE orders ADD COLUMN address TEXT;
+      ALTER TABLE orders ADD COLUMN phone_number TEXT;
+      ALTER TABLE orders ADD COLUMN order_date TEXT;
+    `);
   }
 }
 
@@ -71,8 +118,8 @@ function upsertProducts(products) {
   return withConnection((connection) => {
     connection.exec('DELETE FROM products');
     const insert = connection.prepare(`
-      INSERT INTO products (name, price, quantity, desc, image, emoji, color)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO products (name, price, quantity, desc, image)
+      VALUES (?, ?, ?, ?, ?)
     `);
 
     for (const product of products || []) {
@@ -81,9 +128,7 @@ function upsertProducts(products) {
         Number(product.price),
         Number(product.quantity || 0),
         product.desc || '',
-        product.image || null,
-        product.emoji || null,
-        product.color || 'linear-gradient(135deg, #8ecae6, #219ebc)'
+        product.image || null
       );
     }
 
@@ -100,14 +145,28 @@ function addOrder(order) {
 
   return withConnection((connection) => {
     const insertedIds = [];
+    const customerName = order?.customer?.name || order?.customer_name || order?.name || '';
+    const address = order?.customer?.address || order?.address || '';
+    const phoneNumber = order?.customer?.phone || order?.phone_number || order?.phone || '';
+    const orderDate = order?.createdAt || order?.order_date || new Date().toISOString();
+
     for (const item of items) {
       const productId = Number(item?.product_id ?? item?.productId ?? item?.id ?? order?.product_id ?? order?.productId ?? order?.id ?? 0);
       const quantity = Number(item?.quantity ?? order?.quantity ?? 1);
       const unitPrice = Number(item?.price ?? order?.price ?? 0);
       const totalPrice = Number(item?.total_price ?? item?.totalPrice ?? order?.total_price ?? order?.totalPrice ?? unitPrice * quantity);
 
-      const result = connection.prepare('INSERT INTO orders (product_id, quantity, total_price) VALUES (?, ?, ?)').run(productId, quantity, totalPrice);
+      const result = connection.prepare(
+        'INSERT INTO orders (product_id, quantity, total_price, customer_name, address, phone_number, order_date) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      ).run(productId, quantity, totalPrice, customerName, address, phoneNumber, orderDate);
       insertedIds.push(result.lastInsertRowid);
+    }
+
+    if (customerName || address || phoneNumber) {
+      const customerInsert = connection.prepare(
+        'INSERT INTO customers (customer_name, address, email, phone_number) VALUES (?, ?, ?, ?)'
+      );
+      customerInsert.run(customerName, address, order?.customer?.email || '', phoneNumber);
     }
 
     return { ids: insertedIds };

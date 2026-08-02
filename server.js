@@ -3,6 +3,7 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { getProducts, upsertProducts, getOrders, addOrder, resetOrders } = require('./db');
+const { sendSmsNotification } = require('./sms');
 
 const app = express();
 const port = process.env.PORT || 3100;
@@ -16,28 +17,22 @@ const defaultProducts = [
     name: 'Aurora Lamp',
     price: 99,
     desc: 'Soft ambient light for cozy evenings and desk styling.',
-    emoji: '💡',
     image: null,
     quantity: 10,
-    color: 'linear-gradient(135deg, #ff8a65, #ffb74d)',
   },
   {
     name: 'Harbor Bottle',
     price: 59,
     desc: 'A durable bottle with a sleek silhouette for daily rituals.',
-    emoji: '🧴',
     image: null,
     quantity: 12,
-    color: 'linear-gradient(135deg, #4db6ac, #26a69a)',
   },
   {
     name: 'Summit Backpack',
     price: 229,
     desc: 'Weather-ready carryall built for commuting and weekend adventures.',
-    emoji: '🎒',
     image: null,
     quantity: 8,
-    color: 'linear-gradient(135deg, #5c6bc0, #7e57c2)',
   },
 ];
 
@@ -65,12 +60,39 @@ app.post('/api/products', (req, res) => {
 
 app.get('/api/orders', (req, res) => {
   const rows = getOrders();
-  const orders = rows.map((row) => ({
-    id: row.id,
-    product_id: row.product_id,
-    quantity: row.quantity,
-    total_price: row.total_price,
-  }));
+  const products = getProducts();
+  const productById = Object.fromEntries(products.map((product) => [product.id, product]));
+  const orders = rows.map((row) => {
+    const product = productById[row.product_id];
+    const addressParts = [row.address].filter(Boolean);
+    const customerAddress = addressParts.join(', ');
+
+    return {
+      id: row.id,
+      createdAt: row.order_date || new Date().toISOString(),
+      customer: {
+        name: row.customer_name || 'Customer',
+        email: '',
+        address: customerAddress,
+        city: '',
+        zip: '',
+        phone: row.phone_number || '',
+      },
+      payment: 'Cash',
+      notes: '—',
+      items: [
+        {
+          name: product?.name || `Product ${row.product_id}`,
+          price: Number(product?.price ?? 0),
+          quantity: Number(row.quantity ?? 1),
+        },
+      ],
+      totals: {
+        total: Number(row.total_price ?? 0),
+      },
+    };
+  });
+
   res.json(orders);
 });
 
@@ -90,20 +112,39 @@ app.post('/api/orders', (req, res) => {
   orders.forEach((order) => addOrder(order));
   return res.json(orders.map((order) => ({
     id: order.id,
+    createdAt: order.createdAt || order.order_date || new Date().toISOString(),
+    customer: {
+      name: order?.customer?.name || order?.customer_name || order?.name || 'Customer',
+      email: order?.customer?.email || '',
+      address: order?.customer?.address || order?.address || '',
+      city: order?.customer?.city || '',
+      zip: order?.customer?.zip || '',
+      phone: order?.customer?.phone || order?.phone_number || order?.phone || '',
+    },
+    payment: order?.payment || 'Cash',
+    notes: order?.notes || '—',
+    items: Array.isArray(order?.items) ? order.items : [],
+    totals: order?.totals || { total: order?.total_price ?? order?.totalPrice ?? 0 },
     product_id: order.product_id ?? order.productId,
     quantity: order.quantity,
     total_price: order.total_price ?? order.totalPrice,
   })));
 });
 
-app.post('/api/order', (req, res) => {
+app.post('/api/order', async (req, res) => {
   const order = req.body;
   if (!order) {
     return res.status(400).json({ error: 'Invalid order payload' });
   }
 
   addOrder(order);
-  return res.json({ success: true, order });
+
+  try {
+    const smsResult = await sendSmsNotification(order);
+    return res.json({ success: true, order, sms: smsResult });
+  } catch (error) {
+    return res.status(500).json({ success: true, order, sms: { ok: false, error: error.message } });
+  }
 });
 
 app.post('/api/login', (req, res) => {

@@ -43,6 +43,21 @@ const checkoutLink = document.getElementById("checkoutLink");
 const checkoutForm = document.getElementById("checkoutForm");
 const checkoutMessage = document.getElementById("checkoutMessage");
 const checkoutSummary = document.getElementById("checkoutSummary");
+
+async function notifyCustomerAfterOrder(order) {
+  try {
+    const response = await fetch("/api/order", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(order),
+    });
+
+    const payload = await response.json();
+    return payload?.sms || { ok: false, error: "No SMS response" };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+}
 const qrBox = document.getElementById("qrBox");
 const addProductForm = document.getElementById("addProductForm");
 const adminProductList = document.getElementById("adminProductList");
@@ -150,10 +165,17 @@ async function saveOrders() {
     }
 
     const payload = await response.json();
-    if (Array.isArray(payload)) {
-      orders = payload;
-    } else if (payload && Array.isArray(payload.orders)) {
-      orders = payload.orders;
+    const payloadOrders = Array.isArray(payload)
+      ? payload
+      : payload && Array.isArray(payload.orders)
+        ? payload.orders
+        : null;
+
+    if (Array.isArray(payloadOrders)) {
+      const hasCustomerData = payloadOrders.some((order) => order?.customer || order?.customer_name || order?.customerName || order?.address || order?.phone_number || order?.order_date);
+      if (hasCustomerData) {
+        orders = payloadOrders;
+      }
     }
     localStorage.setItem("northstarOrders", JSON.stringify(orders));
   } catch (error) {
@@ -388,23 +410,97 @@ function renderAdminProducts() {
     .join("");
 }
 
-function renderAdminOrders() {
-  if (!adminOrdersContainer) return;
-  if (orderCount) {
-    orderCount.textContent = orders.length;
+function formatStaticDate(value) {
+  if (!value) {
+    return "Pending";
   }
 
-  const totalRevenue = orders.reduce((sum, order) => sum + order.totals.total, 0);
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return String(value);
+  }
+
+  return parsed.toLocaleString("en-US", {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    hour12: true,
+  });
+}
+
+function normalizeOrderForDisplay(order) {
+  const items = Array.isArray(order?.items) && order.items.length > 0
+    ? order.items.map((item) => ({
+        ...item,
+        name: item.name || item.productName || item.title || "Product",
+        price: Number(item.price ?? item.unitPrice ?? item.totalPrice ?? item.total_price ?? 0),
+        quantity: Number(item.quantity ?? 1),
+      }))
+    : [];
+
+  if (items.length === 0) {
+    const productId = Number(order?.product_id ?? order?.productId ?? order?.id ?? 0);
+    const matchedProduct = products.find((product) => product.id === productId || product.name === order?.name);
+    const quantity = Number(order?.quantity ?? 1);
+    const total = Number(order?.total_price ?? order?.totalPrice ?? order?.totals?.total ?? 0);
+
+    if (matchedProduct || productId) {
+      items.push({
+        name: matchedProduct?.name || `Product #${productId}`,
+        price: Number(matchedProduct?.price ?? total / Math.max(quantity, 1)),
+        quantity,
+      });
+    }
+  }
+
+  const total = Number(
+    order?.totals?.total ??
+      order?.total_price ??
+      order?.totalPrice ??
+      items.reduce((sum, item) => sum + Number(item.price ?? 0) * Number(item.quantity ?? 1), 0) ??
+      0
+  );
+
+  return {
+    ...order,
+    createdAt: order?.createdAt ?? order?.created_at ?? order?.order_date ?? new Date().toISOString(),
+    customer: {
+      name: order?.customer?.name ?? order?.customer_name ?? order?.name ?? "Customer",
+      email: order?.customer?.email ?? "",
+      address: order?.customer?.address ?? order?.address ?? "",
+      city: order?.customer?.city ?? "",
+      zip: order?.customer?.zip ?? "",
+      phone: order?.customer?.phone ?? order?.phone_number ?? order?.phone ?? "",
+    },
+    payment: order?.payment ?? "Cash",
+    notes: order?.notes ?? "—",
+    items,
+    totals: order?.totals ?? { total },
+  };
+}
+
+function renderAdminOrders() {
+  if (!adminOrdersContainer) return;
+  const normalizedOrders = orders.map(normalizeOrderForDisplay);
+
+  if (orderCount) {
+    orderCount.textContent = normalizedOrders.length;
+  }
+
+  const totalRevenue = normalizedOrders.reduce((sum, order) => sum + Number(order.totals?.total ?? 0), 0);
   if (orderRevenue) {
     orderRevenue.textContent = formatCurrency(totalRevenue);
   }
 
-  if (orders.length === 0) {
+  if (normalizedOrders.length === 0) {
     adminOrdersContainer.innerHTML = '<p class="empty-state">No orders have been placed yet.</p>';
     return;
   }
 
-  adminOrdersContainer.innerHTML = orders
+  adminOrdersContainer.innerHTML = normalizedOrders
     .slice()
     .reverse()
     .map(
@@ -413,14 +509,16 @@ function renderAdminOrders() {
           <div class="order-meta">
             <div>
               <strong>Order #${order.id}</strong>
-              <p class="order-details">${new Date(order.createdAt).toLocaleString()}</p>
+              <p class="order-details">${formatStaticDate(order.createdAt)}</p>
             </div>
-            <strong>${formatCurrency(order.totals.total)}</strong>
+            <strong>${formatCurrency(Number(order.totals?.total ?? 0))}</strong>
           </div>
           <div class="order-details">
-            <span>${order.customer.name} • ${order.customer.email}</span>
-            <span>${order.customer.address}, ${order.customer.city} ${order.customer.zip}</span>
-            <span>Payment: ${order.payment}</span>
+            <span>${order.customer?.name || "Customer"} • ${order.customer?.email || "No email provided"}</span>
+            <span>${[order.customer?.address, order.customer?.city, order.customer?.zip].filter(Boolean).join(", ") || "No address provided"}</span>
+            <span>Phone: ${order.customer?.phone || "No phone number provided"}</span>
+            <span>Order date: ${formatStaticDate(order.createdAt)}</span>
+            <span>Payment: ${order.payment || "Cash"}</span>
             <span>Notes: ${order.notes || "—"}</span>
           </div>
           <div class="order-items">
@@ -428,8 +526,57 @@ function renderAdminOrders() {
               .map(
                 (item) => `
                   <div class="order-item">
-                    <span>${item.name} × ${item.quantity}</span>
-                    <strong>${formatCurrency(item.price * item.quantity)}</strong>
+                    <span>${item.name || "Product"} × ${item.quantity}</span>
+                    <strong>${formatCurrency(Number(item.price ?? 0) * Number(item.quantity ?? 1))}</strong>
+                  </div>
+                `
+              )
+              .join("")}
+          </div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderAllOrdersPage() {
+  const container = document.getElementById("allOrders");
+  if (!container) return;
+
+  const normalizedOrders = orders.map(normalizeOrderForDisplay);
+  if (normalizedOrders.length === 0) {
+    container.innerHTML = '<p class="empty-state">No orders have been placed yet.</p>';
+    return;
+  }
+
+  container.innerHTML = normalizedOrders
+    .slice()
+    .reverse()
+    .map(
+      (order) => `
+        <div class="order-card">
+          <div class="order-meta">
+            <div>
+              <strong>Order #${order.id}</strong>
+              <p class="order-details">${formatStaticDate(order.createdAt)}</p>
+            </div>
+            <strong>${formatCurrency(Number(order.totals?.total ?? 0))}</strong>
+          </div>
+          <div class="order-details">
+            <span>${order.customer?.name || "Customer"} • ${order.customer?.email || "No email provided"}</span>
+            <span>${[order.customer?.address, order.customer?.city, order.customer?.zip].filter(Boolean).join(", ") || "No address provided"}</span>
+            <span>Phone: ${order.customer?.phone || "No phone number provided"}</span>
+            <span>Order date: ${formatStaticDate(order.createdAt)}</span>
+            <span>Payment: ${order.payment || "Cash"}</span>
+            <span>Notes: ${order.notes || "—"}</span>
+          </div>
+          <div class="order-items">
+            ${order.items
+              .map(
+                (item) => `
+                  <div class="order-item">
+                    <span>${item.name || "Product"} × ${item.quantity}</span>
+                    <strong>${formatCurrency(Number(item.price ?? 0) * Number(item.quantity ?? 1))}</strong>
                   </div>
                 `
               )
@@ -555,21 +702,30 @@ if (checkoutForm) {
     }
   });
 
-  checkoutForm.addEventListener("submit", (event) => {
+  checkoutForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(checkoutForm);
     const order = {
       id: Date.now(),
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toLocaleString("en-US", {
+        year: "numeric",
+        month: "numeric",
+        day: "numeric",
+        hour: "numeric",
+        minute: "numeric",
+        second: "numeric",
+        hour12: true,
+      }),
       customer: {
-        name: formData.get("name"),
-        email: formData.get("email"),
-        address: formData.get("address"),
-        city: formData.get("city"),
-        zip: formData.get("zip"),
+        name: formData.get("name")?.toString().trim(),
+        email: formData.get("email")?.toString().trim(),
+        address: [formData.get("address")?.toString().trim(), formData.get("city")?.toString().trim(), formData.get("zip")?.toString().trim()].filter(Boolean).join(", "),
+        city: formData.get("city")?.toString().trim(),
+        zip: formData.get("zip")?.toString().trim(),
+        phone: formData.get("phone")?.toString().trim(),
       },
-      payment: formData.get("payment"),
-      notes: formData.get("notes"),
+      payment: formData.get("payment")?.toString().trim(),
+      notes: formData.get("notes")?.toString().trim(),
       items: normalizeCartItems(cart).map((item) => ({ ...item })),
       totals: getOrderTotals(),
     };
@@ -579,9 +735,27 @@ if (checkoutForm) {
     cart = [];
     saveCart();
     updateCartDisplay();
+
+    const smsResult = await notifyCustomerAfterOrder(order);
     if (checkoutMessage) {
-      checkoutMessage.textContent = "Order placed successfully! A confirmation email is on the way.";
+      checkoutMessage.textContent = smsResult?.ok
+        ? `Order placed successfully! A confirmation SMS has been sent to ${order.customer.phone || "the provided phone number"}.`
+        : "Order placed successfully! We couldn't send the SMS confirmation right now.";
     }
+
+    try {
+      const response = await fetch("/api/orders");
+      if (response.ok) {
+        const serverOrders = await response.json();
+        if (Array.isArray(serverOrders)) {
+          orders = serverOrders;
+          localStorage.setItem("northstarOrders", JSON.stringify(orders));
+        }
+      }
+    } catch (error) {
+      // keep using the locally queued order data if the refresh fails
+    }
+
     checkoutForm.reset();
     const qrRadio = checkoutForm.querySelector('input[name="payment"][value="qr"]');
     if (qrRadio) {
@@ -729,6 +903,7 @@ ensureAdminPage();
   }
   renderAdminProducts();
   renderAdminOrders();
+  renderAllOrdersPage();
   updateCartDisplay();
   togglePaymentUI();
 })();
